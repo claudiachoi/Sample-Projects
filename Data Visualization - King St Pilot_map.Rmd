@@ -1,0 +1,98 @@
+---
+title: "King_ST_Pilot_Map"
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(rgdal)
+library(sp)
+library(leaflet)
+library(geojsonio)
+library(maptools)
+library(htmltools)
+library(plyr)
+```
+
+```{r}
+#Load CSV data
+time = read.csv("time.csv")
+
+#Find average baseline travel time
+temp1 = xtabs(formula = baseline_travel_time ~ street+direction, aggregate(baseline_travel_time~street+direction, time, mean))
+temp1 = as.data.frame(temp1)
+temp1 = temp1[temp1$Freq != 0,]
+colnames(temp1)[colnames(temp1) == "Freq"] <- "baseline_travel"
+
+#find average pilot travel time
+temp2 = xtabs(formula = average_travel_time ~ street+direction, aggregate(average_travel_time~street+direction, time, mean))
+temp2 = as.data.frame(temp2)
+temp2 = temp2[temp2$Freq != 0,]
+colnames(temp2)[colnames(temp2) == "Freq"] <- "average_travel"
+
+#combine data
+time <- join(temp1, temp2)
+
+#Load geojson data
+segments <- geojsonio::geojson_read("segments.geojson", what = "sp")
+
+#merge average time data into geoson data
+segments <- sp::merge(segments, time, by = c("street","direction"))
+```
+
+```{r}
+#Filter eastbound and northbound 
+east_north <- subset(segments, direction %in% c("EB", "NB"))
+
+#Set label information
+labs1 <- lapply(seq(nrow(east_north@data)), function(i){
+  paste0('<p>', east_north@data[i, "street"], ', ', east_north@data[i, "direction"], '<p></p>', 'Baseline Average: ', round(east_north@data[i, "baseline_travel"],2), ' mins','<p></p>', 'Pilot Average: ', round(east_north@data[i, "average_travel"],2), ' mins', '</p>')
+})
+
+#filter westbound and southbound
+west_south <- subset(segments, direction %in% c("WB", "SB"))
+
+#set label information
+labs2 <- lapply(seq(nrow(west_south@data)), function(i){
+  paste0('<p>', west_south@data[i, "street"], ', ', west_south@data[i, "direction"], '<p></p>', 'Baseline Average: ', round(west_south@data[i, "baseline_travel"],2), ' mins','<p></p>', 'Pilot Average: ', round(west_south@data[i, "average_travel"],2), ' mins', '</p>')
+})
+
+#Generate map
+map <- leaflet() %>% setView(lng = -79.3884, lat = 43.6499, zoom = 15)
+map %>% addProviderTiles(providers$CartoDB.Positron) %>% 
+  #EB NB layer
+  addPolylines(data = east_north, highlight = highlightOptions(
+    weight = 5,
+    fillOpacity = 0,
+    color = "red",
+    opacity = 1.0,
+    bringToFront = TRUE,
+    sendToBack = TRUE
+  ),
+  label = lapply(labs1, HTML),
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"), textsize = "15px", direction = "auto"), group = 'Eastbound & Northbound'
+) %>%
+  #WB SB layer
+  addPolylines(data = west_south, highlight = highlightOptions(
+    weight = 5,
+    fillOpacity = 0,
+    color = "red",
+    opacity = 1.0,
+    bringToFront = TRUE,
+    sendToBack = TRUE
+  ),
+  label = lapply(labs2, HTML),
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"), textsize = "15px", direction = "auto"), group = 'Westbound & Southbound'
+) %>%
+  #Layers control
+  addLayersControl(
+    overlayGroups = c("Eastbound & Northbound", "Westbound & Southbound"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
